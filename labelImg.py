@@ -92,9 +92,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.string_bundle = StringBundle.get_bundle()
         get_str = lambda str_id: self.string_bundle.get_string(str_id)
 
-        # Save as Pascal voc xml
+        # Save as yolo
         self.default_save_dir = default_save_dir
-        self.label_file_format = settings.get(SETTING_LABEL_FILE_FORMAT, LabelFileFormat.PASCAL_VOC)
+        self.label_file_format = settings.get(SETTING_LABEL_FILE_FORMAT, LabelFileFormat.YOLO)
 
         # For loading all image under a directory
         self.m_img_list = []
@@ -112,6 +112,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.screencast = "https://youtu.be/p0nR2YsCY_U"
 
         # Load predefined classes to the list
+        self.class_file = default_prefdef_class_file
         self.load_predefined_classes(default_prefdef_class_file)
 
         self.default_label = self.label_hist[0]
@@ -317,6 +318,9 @@ class MainWindow(QMainWindow, WindowMixin):
         fit_width = action(get_str('fitWidth'), self.set_fit_width,
                            'Ctrl+Shift+F', 'fit-width', get_str('fitWidthDetail'),
                            checkable=True, enabled=False)
+        auto_label = action(get_str('autoLabel'), self.auto_label,
+                    'Ctrl+Shift+Y', 'auto-label', get_str('autoLabelDetail'), enabled=True)
+
         # Group zoom controls into a list for easier toggling.
         zoom_actions = (self.zoom_widget, zoom_in, zoom_out,
                         zoom_org, fit_window, fit_width)
@@ -365,6 +369,7 @@ class MainWindow(QMainWindow, WindowMixin):
                               shapeLineColor=shape_line_color, shapeFillColor=shape_fill_color,
                               zoom=zoom, zoomIn=zoom_in, zoomOut=zoom_out, zoomOrg=zoom_org,
                               fitWindow=fit_window, fitWidth=fit_width,
+                              #autolabel=auto_label,
                               zoomActions=zoom_actions,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
@@ -413,7 +418,7 @@ class MainWindow(QMainWindow, WindowMixin):
             labels, advanced_mode, None,
             hide_all, show_all, None,
             zoom_in, zoom_out, zoom_org, None,
-            fit_window, fit_width))
+            fit_window, fit_width)) #, auto_label))
 
         self.menus.file.aboutToShow.connect(self.update_file_menu)
 
@@ -426,7 +431,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, copy, delete, None,
-            zoom_in, zoom, zoom_out, fit_window, fit_width)
+            zoom_in, zoom, zoom_out, fit_window, fit_width) #, auto_label)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
@@ -1046,6 +1051,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.zoom_mode = self.FIT_WIDTH if value else self.MANUAL_ZOOM
         self.adjust_scale()
 
+    def auto_label(self, value=True):
+        print("Auto label")
+        
     def toggle_polygons(self, value):
         for item, shape in self.items_to_shapes.items():
             item.setCheckState(Qt.Checked if value else Qt.Unchecked)
@@ -1119,8 +1127,25 @@ class MainWindow(QMainWindow, WindowMixin):
             self.toggle_actions(True)
             self.show_bounding_box_from_annotation_file(file_path)
 
+            images = []
+            deep_labels = []
+            manual_labels = []
+            for root, dirs, files in os.walk(self.last_open_dir):
+                for file in files:
+                    if file.endswith("png"):
+                        images.append(file)
+                    if file.endswith("txt"):
+                        manual_labels.append(file)
+                    if file.endswith("deep"):
+                        deep_labels.append(file)
+            try:
+                manual_labels.remove("classes.txt")
+            except ValueError:
+                pass
+
             counter = self.counter_str()
-            self.setWindowTitle(__appname__ + ' ' + file_path + ' ' + counter)
+            self.setWindowTitle(__appname__ + ' ' + file_path + ' ' + counter 
+                + "  auto_labelled: " + str(len(deep_labels)) + " manual_labelled: " + str(len(manual_labels)))
 
             # Default : select last item if there is at least one item
             if self.label_list.count():
@@ -1142,7 +1167,18 @@ class MainWindow(QMainWindow, WindowMixin):
             basename = os.path.basename(os.path.splitext(file_path)[0])
             xml_path = os.path.join(self.default_save_dir, basename + XML_EXT)
             txt_path = os.path.join(self.default_save_dir, basename + TXT_EXT)
+            gen_txt_path = txt_path + ".deep"
             json_path = os.path.join(self.default_save_dir, basename + JSON_EXT)
+            
+            print(txt_path)
+            if os.path.isfile(txt_path):
+                print("OK")
+            else:
+                print("NOT FOUND") 
+                print(gen_txt_path)
+                if os.path.isfile(gen_txt_path):
+                    print("OK")
+                    txt_path = gen_txt_path
 
             """Annotation file priority:
             PascalXML > YOLO
@@ -1569,7 +1605,7 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         self.set_format(FORMAT_YOLO)
-        t_yolo_parse_reader = YoloReader(txt_path, self.image)
+        t_yolo_parse_reader = YoloReader(txt_path, self.image, self.class_file)
         shapes = t_yolo_parse_reader.get_shapes()
         print(shapes)
         self.load_labels(shapes)
